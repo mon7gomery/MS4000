@@ -3,6 +3,9 @@
 # vim: set ts=8 sts=8 sw=8 noet ft=make :
 # =============================================================================
 
+#PIO_ENV ?= debug
+PIO_ENV ?= ms4000
+
 include environment.ms4
 
 # =============================================================================
@@ -11,7 +14,7 @@ include environment.ms4
 .PHONY: all release builder builder-force builder-clean builder-burn builder-shell builder-test \
 		reqs-debian install-python-venv new-python-environment python-requirements activate \
 		tools factory firmware firmware-clean firmware-proto \
-		web web-deps web-clean assets package clean rebuild help
+		web web-deps web-clean assets package clean rebuild help ide-prepare
 
 # =============================================================================
 # Default target (you can change this to "release" if preferred)
@@ -176,6 +179,33 @@ package: web assets
 
 rebuild: clean release
 
+ide-prepare:
+# Top-level Makefile
+
+
+.PHONY: ide-prepare
+
+ide-prepare:
+	$(call announce,🔧 Preparing compile_commands.json for IDE...)
+	# 1. Clean old databases to avoid stale entries
+	@rm -f compile_commands.json firmware/compile_commands.json web/app/compile_commands.json
+	# 2. Generate for each part (only rebuild what is needed)
+	@bear -- make build || true                  # top-level (if you have C/C++ sources here)
+	@(cd web/app && bear -- make) || true        # web/app (ignore if no Makefile or already up-to-date)
+	# 3. Firmware — use the preferred PIO method (much more accurate for ESP8266)
+	@cd firmware && pio run -e $(PIO_ENV) -t compiledb
+	# 4. Merge everything safely (remove exact duplicates by "file" field)
+	@jq -s 'add | unique_by(.file)' \
+		firmware/compile_commands.json \
+		web/app/compile_commands.json \
+		compile_commands.json 2>/dev/null | \
+		sponge ./compile_commands.json || \
+		echo "Warning: Some sub-project databases missing"
+	# 5. Cleanup
+	@rm -f firmware/compile_commands.json web/app/compile_commands.json
+	@echo "✅ compile_commands.json successfully prepared at root."
+	@ls -l ./compile_commands.json
+
 # =============================================================================
 # Help
 # =============================================================================
@@ -207,6 +237,7 @@ help:
 	@echo " ✅ [release]                 Full release: tools + builder + package + flash"
 	@echo " 🧹 [clean]                   Clean firmware and web"
 	@echo " ✅ [rebuild]                 clean + release"
+	@echo " 🏭 [ide-prepare]             Prepare compile_commands.json for use in IDE"
 	@echo ""
 	@echo "$(CYAN)═════════════════════════════════════════════════════════════════════════════════$(RESET)"
 	@echo "Python: $(MS4_PYTHON)"
